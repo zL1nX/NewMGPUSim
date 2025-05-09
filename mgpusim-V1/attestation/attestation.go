@@ -26,6 +26,7 @@ func GenerateKeypair() (*ecdsa.PrivateKey, *ecdsa.PublicKey) {
 
 func GenerateMeasurement(gpuID uint64) []byte {
 	// For simulation, hash the GPU ID (in real code, hash firmware/config)
+	// attest the actual measurement
 	h := sha256.New()
 	h.Write([]byte{byte(gpuID)})
 	return h.Sum(nil)
