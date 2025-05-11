@@ -12,7 +12,7 @@ import (
 	"github.com/sarchlab/akita/v3/tracing"
 	"github.com/sarchlab/mgpusim/v3/attestation"
 	"github.com/sarchlab/mgpusim/v3/protocol"
-	"github.com/sarchlab/mgpusim/v3/samples/runner/puf"
+	"github.com/sarchlab/mgpusim/v3/puf"
 	"github.com/sarchlab/mgpusim/v3/timing/cp/internal/dispatching"
 	"github.com/sarchlab/mgpusim/v3/timing/cp/internal/resource"
 	"github.com/sarchlab/mgpusim/v3/timing/pagemigrationcontroller"

@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	"github.com/sarchlab/akita/v3/sim"
+	"github.com/sarchlab/mgpusim/v3/puf"
 	"github.com/sarchlab/mgpusim/v3/samples/runner"
-	"github.com/sarchlab/mgpusim/v3/samples/runner/puf"
 )
 
 func generateRandomChallenge(size int) []byte {
