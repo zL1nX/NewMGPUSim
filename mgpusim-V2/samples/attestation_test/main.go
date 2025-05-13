@@ -1,31 +1,36 @@
 package main
 
 import (
+	"crypto/ecdsa"
 	"fmt"
 	"log"
 
 	"github.com/sarchlab/akita/v3/sim"
+	"github.com/sarchlab/mgpusim/v3/attestation"
 	"github.com/sarchlab/mgpusim/v3/protocol"
 	"github.com/sarchlab/mgpusim/v3/samples/runner"
 )
 
+func InitAttestationTest() (*ecdsa.PrivateKey, *ecdsa.PublicKey) {
+	privateKey, publicKey := attestation.GenerateKeypair()
+	return privateKey, publicKey
+}
+
 func main() {
 
-	gpuNum := 1
+	gpuNum := 3
 	platform := runner.MakeR9NanoBuilder().WithNumGPU(gpuNum).Build()
 	resp := make([]*protocol.GPUAttestationRsp, gpuNum)
 	waitCycle := 20
 
+	privateKeys := make([]*ecdsa.PrivateKey, gpuNum)
+	publicKeys := make([]*ecdsa.PublicKey, gpuNum)
 	// Initialize each GPU's attestation capability and register public keys with driver
 	for gpuID := 0; gpuID < gpuNum; gpuID++ {
-		gpu := platform.GPUs[gpuID]
-		publicKey, err := gpu.CommandProcessor.InitAttestation(uint64(gpuID))
-		if err != nil {
-			log.Fatalf("Failed to initialize attestation for GPU %d: %v", gpuID, err)
-		}
-
+		privateKey, publicKey := InitAttestationTest()
+		privateKeys[gpuID] = privateKey
+		publicKeys[gpuID] = publicKey
 		// Register the public key with the driver
-		platform.Driver.RegisterGPUPublicKey(uint64(gpuID), publicKey)
 		fmt.Printf("Registered public key for GPU %d\n", gpuID)
 	}
 

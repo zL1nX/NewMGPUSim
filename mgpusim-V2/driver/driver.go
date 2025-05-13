@@ -853,7 +853,7 @@ func (d *Driver) sendToMMU(now sim.VTimeInSec) bool {
 func (d *Driver) GenerateAttestationReq(gpuID uint64) (*protocol.GPUAttestationReq, error) {
 	gpu := d.GPUs[gpuID]
 	if gpu == nil {
-		return nil, fmt.Errorf("GPU %d not found", gpuID)
+		return nil, fmt.Errorf("GPU %d not found", gpuID+1)
 	}
 	// Generate random nonce
 	nonce := make([]byte, 32)
@@ -872,12 +872,11 @@ func (d *Driver) GenerateAttestationReq(gpuID uint64) (*protocol.GPUAttestationR
 
 func (d *Driver) VerifyAttestationReport(rsp *protocol.GPUAttestationRsp) bool {
 	report := rsp.Report
-	publicKey, exists := d.gpuPublicKeys[report.GPUId]
+	publicKey, exists := d.gpuPublicKeys[report.GPUId-1]
 	if !exists {
 		fmt.Printf("Error: No public key registered for GPU %d\n", report.GPUId)
 		return false // Unknown GPU
 	}
-
 	res, err := attestation.VerifyReportSignature(
 		&report,
 		publicKey,

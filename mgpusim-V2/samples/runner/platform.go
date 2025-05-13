@@ -8,6 +8,7 @@ import (
 	"github.com/sarchlab/mgpusim/v3/timing/cp"
 	"github.com/sarchlab/mgpusim/v3/timing/pagemigrationcontroller"
 	"github.com/sarchlab/mgpusim/v3/timing/rdma"
+	"github.com/sarchlab/mgpusim/v3/timing/rot"
 )
 
 // TraceableComponent is a component that can accept traces
@@ -41,4 +42,5 @@ type GPU struct {
 	L2TLBs           []TraceableComponent
 	MemControllers   []TraceableComponent
 	PUFComponent     *puf.PUF
+	RoTComponent     *rot.RoT
 }

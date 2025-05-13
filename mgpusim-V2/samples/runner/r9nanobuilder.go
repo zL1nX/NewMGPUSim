@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	rob2 "github.com/sarchlab/mgpusim/v3/timing/rob"
+	"github.com/sarchlab/mgpusim/v3/timing/rot"
 
 	"github.com/sarchlab/akita/v3/analysis"
 	"github.com/sarchlab/akita/v3/mem/cache/writearound"
@@ -82,6 +83,7 @@ type R9NanoGPUBuilder struct {
 	l2ToDramConnection     *sim.DirectConnection
 
 	pufComponent *puf.PUF
+	rot          *rot.RoT
 }
 
 // MakeR9NanoGPUBuilder provides a GPU builder that can builds the R9Nano GPU.
@@ -233,7 +235,8 @@ func (b R9NanoGPUBuilder) WithGlobalStorage(
 func (b R9NanoGPUBuilder) Build(name string, id uint64) *GPU {
 	fmt.Println("[*] Building R9 Nano GPU Instance")
 	b.createGPU(name, id)
-	b.buildPUF()
+	//b.buildPUF()
+	b.buildRoT()
 	b.buildSAs()
 	b.buildL2Caches()
 	b.buildDRAMControllers()
@@ -250,9 +253,10 @@ func (b R9NanoGPUBuilder) Build(name string, id uint64) *GPU {
 	return b.gpu
 }
 
-// Add after createGPU function
-func (b *R9NanoGPUBuilder) buildPUF() {
-	fmt.Printf("[*] Building PUF in GPU %d\n", b.gpuID)
+func (b *R9NanoGPUBuilder) buildRoT() {
+	fmt.Printf("[*] Building RoT in GPU %d\n", b.gpuID)
+
+	fmt.Printf("[*] Building PUF first in GPU %d\n", b.gpuID)
 
 	// Generate unique 8-byte randID based on GPU ID
 	randID := make([]byte, 8)
@@ -266,19 +270,59 @@ func (b *R9NanoGPUBuilder) buildPUF() {
 		32,     // 32-byte (256-bit) response
 		randID, // 8-byte unique randID per GPU
 	)
-	b.gpu.PUFComponent = b.pufComponent
-
-	if b.monitor != nil {
-		b.monitor.RegisterComponent(b.pufComponent)
-	}
-
-	if b.enableVisTracing {
-		tracing.CollectTrace(b.pufComponent, b.visTracer)
-	}
 
 	fmt.Printf("[*] PUF built Successfully for GPU %d with randID: %x\n",
 		b.gpuID, randID)
+
+	b.rot = rot.NewRoT(
+		fmt.Sprintf("%s.RoT", b.gpuName),
+		b.engine,
+		b.freq,
+		b.gpuID,
+		b.pufComponent.ChallengeWidth,
+		b.pufComponent.ResponseWidth,
+	)
+	b.rot.SetPUF(b.pufComponent)
+	b.gpu.RoTComponent = b.rot
+
+	if b.monitor != nil {
+		b.monitor.RegisterComponent(b.rot)
+	}
+
+	if b.enableVisTracing {
+		tracing.CollectTrace(b.rot, b.visTracer)
+	}
 }
+
+// // Add after createGPU function
+// func (b *R9NanoGPUBuilder) buildPUF() {
+// 	fmt.Printf("[*] Building PUF in GPU %d\n", b.gpuID)
+
+// 	// Generate unique 8-byte randID based on GPU ID
+// 	randID := make([]byte, 8)
+// 	binary.BigEndian.PutUint64(randID, uint64(0xDEAD00000000)|b.gpuID)
+
+// 	b.pufComponent = puf.NewPUF(
+// 		fmt.Sprintf("%s.PUF", b.gpuName),
+// 		b.engine,
+// 		b.freq,
+// 		32,     // 32-byte (256-bit) challenge
+// 		32,     // 32-byte (256-bit) response
+// 		randID, // 8-byte unique randID per GPU
+// 	)
+// 	b.gpu.PUFComponent = b.pufComponent
+
+// 	if b.monitor != nil {
+// 		b.monitor.RegisterComponent(b.pufComponent)
+// 	}
+
+// 	if b.enableVisTracing {
+// 		tracing.CollectTrace(b.pufComponent, b.visTracer)
+// 	}
+
+// 	fmt.Printf("[*] PUF built Successfully for GPU %d with randID: %x\n",
+// 		b.gpuID, randID)
+// }
 
 func (b *R9NanoGPUBuilder) populateExternalPorts() {
 	b.gpu.Domain.AddPort("CommandProcessor", b.cp.ToDriver)
@@ -314,7 +358,9 @@ func (b *R9NanoGPUBuilder) connectCP() {
 	b.internalConn.PlugIn(b.cp.ToAddressTranslators, 128)
 	b.internalConn.PlugIn(b.cp.ToRDMA, 4)
 	b.internalConn.PlugIn(b.cp.ToPMC, 4)
-	b.internalConn.PlugIn(b.cp.ToPUF, 1)
+	// b.internalConn.PlugIn(b.cp.ToPUF, 1)
+	// fmt.Println(b.cp.ToPUF, b.cp.ToRoT)
+	b.internalConn.PlugIn(b.cp.ToRoT, 1)
 
 	b.cp.RDMA = b.rdmaEngine.CtrlPort
 	b.internalConn.PlugIn(b.cp.RDMA, 1)
@@ -326,10 +372,15 @@ func (b *R9NanoGPUBuilder) connectCP() {
 	b.cp.PMC = pmcControlPort
 	b.internalConn.PlugIn(pmcControlPort, 1)
 
-	b.internalConn.PlugIn(b.pufComponent.ToCP, 1)
-	b.cp.PUF = b.pufComponent.ToCP
+	// b.internalConn.PlugIn(b.pufComponent.ToCP, 1)
+	// b.cp.PUF = b.pufComponent.ToCP
 
-	fmt.Printf("[*] PUF port connected to CP: %s; %s ; %t\n", b.cp.PUF.Name(), b.cp.ToPUF.Name(), (b.cp.PUF == b.pufComponent.ToCP))
+	// fmt.Printf("[*] PUF port connected to CP: %s; %s ; %t\n", b.cp.PUF.Name(), b.cp.ToPUF.Name(), (b.cp.PUF == b.pufComponent.ToCP))
+
+	b.internalConn.PlugIn(b.rot.ToCP, 1)
+	b.cp.RoT = b.rot.ToCP
+
+	fmt.Printf("[*] RoT port connected to CP: %s; %s ; %t\n", b.cp.RoT.Name(), b.cp.ToRoT.Name(), (b.cp.RoT == b.rot.ToCP))
 
 	b.connectCPWithCUs()
 	b.connectCPWithAddressTranslators()

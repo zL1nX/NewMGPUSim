@@ -31,14 +31,14 @@ func GenerateMeasurement(gpuID uint64) []byte {
 	return h.Sum(nil)
 }
 
-func SignReport(report *AttestationReport) ([]byte, error) {
+func SignReport(report *AttestationReport, privKey *ecdsa.PrivateKey) ([]byte, error) {
 	// Hash the report fields
 	h := sha256.New()
 	h.Write(report.Measurement)
 	h.Write(report.Nonce)
 	// ... add other fields as needed
 	digest := h.Sum(nil)
-	r, s, err := ecdsa.Sign(rand.Reader, gpuPrivateKey, digest)
+	r, s, err := ecdsa.Sign(rand.Reader, privKey, digest)
 	if err != nil {
 		return nil, err
 	}
@@ -49,12 +49,13 @@ func SignReport(report *AttestationReport) ([]byte, error) {
 	return signature, nil
 }
 
-func GenerateAttestationReport(nonce []byte) AttestationReport {
+func GenerateAttestationReport(privKey *ecdsa.PrivateKey, nonce []byte, gpuID uint64) AttestationReport {
 	report := AttestationReport{
 		Nonce: nonce,
+		GPUId: gpuID,
 	}
 	report.Measurement = GenerateMeasurement(report.GPUId)
-	report.Signature, _ = SignReport(&report)
+	report.Signature, _ = SignReport(&report, privKey)
 	return report
 }
 

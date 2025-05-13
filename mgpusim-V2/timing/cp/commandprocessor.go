@@ -10,7 +10,6 @@ import (
 	"github.com/sarchlab/akita/v3/mem/vm/tlb"
 	"github.com/sarchlab/akita/v3/sim"
 	"github.com/sarchlab/akita/v3/tracing"
-	"github.com/sarchlab/mgpusim/v3/attestation"
 	"github.com/sarchlab/mgpusim/v3/protocol"
 	"github.com/sarchlab/mgpusim/v3/puf"
 	"github.com/sarchlab/mgpusim/v3/timing/cp/internal/dispatching"
@@ -40,6 +39,7 @@ type CommandProcessor struct {
 	L2Caches           []sim.Port
 	DRAMControllers    []*idealmemcontroller.Comp
 	PUF                sim.Port
+	RoT                sim.Port
 
 	ToDriver                   sim.Port
 	toDriverSender             sim.BufferedSender
@@ -59,6 +59,8 @@ type CommandProcessor struct {
 	toPMCSender                sim.BufferedSender
 	ToPUF                      sim.Port
 	toPUFSender                sim.BufferedSender
+	ToRoT                      sim.Port
+	toRoTSender                sim.BufferedSender
 
 	currShootdownRequest *protocol.ShootDownCommand
 	currFlushRequest     *protocol.FlushReq
@@ -96,14 +98,6 @@ func (p *CommandProcessor) RegisterCU(cu CUInterfaceForCP) {
 	}
 }
 
-// Add an initializer method for the keypair
-func (p *CommandProcessor) InitAttestation(gpuID uint64) (*ecdsa.PublicKey, error) {
-	p.gpuID = gpuID
-	privateKey, publicKey := attestation.GenerateKeypair()
-	p.privateKey = privateKey
-	return publicKey, nil
-}
-
 // Tick ticks
 func (p *CommandProcessor) Tick(now sim.VTimeInSec) bool {
 	madeProgress := false
@@ -129,7 +123,7 @@ func (p *CommandProcessor) sendMsgsOut(now sim.VTimeInSec) bool {
 	madeProgress = p.sendMsgsOutFromPort(now, p.toRDMASender) || madeProgress
 	madeProgress = p.sendMsgsOutFromPort(now, p.toPMCSender) || madeProgress
 	madeProgress = p.sendMsgsOutFromPort(now, p.toPUFSender) || madeProgress
-
+	madeProgress = p.sendMsgsOutFromPort(now, p.toRoTSender) || madeProgress
 	return madeProgress
 }
 
@@ -199,7 +193,8 @@ func (p *CommandProcessor) processRspFromInternal(now sim.VTimeInSec) bool {
 	madeProgress = p.processRspFromCaches(now) || madeProgress
 	madeProgress = p.processRspFromTLBs(now) || madeProgress
 	madeProgress = p.processRspFromPMC(now) || madeProgress
-	madeProgress = p.processRspFromPUF(now) || madeProgress
+	madeProgress = p.processRspFromRoT(now) || madeProgress
+	// madeProgress = p.processRspFromPUF(now) || madeProgress
 
 	return madeProgress
 }
@@ -208,20 +203,20 @@ func (p *CommandProcessor) processPUFChallenge(
 	now sim.VTimeInSec,
 	req *puf.PUFChallenge,
 ) bool {
-	fmt.Printf("[*] PUF Challenge Received in CP port (%s): %x\n", p.ToPUF.Name(), req.Challenge)
+	fmt.Printf("[*] PUF Challenge Received in CP port (%s): %x\n", p.ToRoT.Name(), req.Challenge)
 	challengeReq := &puf.PUFChallenge{
 		MsgMeta: sim.MsgMeta{
 			ID:       sim.GetIDGenerator().Generate(),
 			SendTime: now,
-			Src:      p.ToPUF,
-			Dst:      p.PUF,
+			Src:      p.ToRoT,
+			Dst:      p.RoT,
 		},
 		Challenge: req.Challenge,
 	}
 
-	p.toPUFSender.Send(challengeReq)
+	p.toRoTSender.Send(challengeReq)
 	p.ToDriver.Retrieve(now)
-	fmt.Printf("[*] PUF Challenge sent to PUF port (%s): %x\n", p.PUF.Name(), challengeReq.Challenge)
+	fmt.Printf("[*] PUF Challenge sent to RoT port (%s): %x\n", p.RoT.Name(), challengeReq.Challenge)
 	return true
 }
 
@@ -230,34 +225,31 @@ func (p *CommandProcessor) processAttestationRequest(
 	req *protocol.GPUAttestationReq,
 ) bool {
 	fmt.Printf("[*] Attestation Request received in CP port (len: %d)\n", len(req.Nonce))
-	// generate measurement and signed attestation report directly by CP
-	report := attestation.GenerateAttestationReport(req.Nonce)
-	report.GPUId = p.gpuID
-	// Send response back to driver
-	rsp := &protocol.GPUAttestationRsp{
+	attestationReq := &protocol.GPUAttestationReq{
 		MsgMeta: sim.MsgMeta{
 			ID:       sim.GetIDGenerator().Generate(),
 			SendTime: now,
-			Src:      p.ToDriver,
-			Dst:      p.Driver,
+			Src:      p.ToRoT,
+			Dst:      p.RoT,
 		},
-		Report: report,
+		Nonce: req.Nonce,
 	}
-	p.toDriverSender.Send(rsp)
+	p.toRoTSender.Send(attestationReq)
 	p.ToDriver.Retrieve(now)
-	fmt.Printf("[*] Attestation Request sent to Driver port (%s)\n", p.Driver.Name())
+
+	fmt.Printf("[*] Attestation Request sent to RoT port (%s)\n", p.RoT.Name())
 	return true
 }
 
-func (p *CommandProcessor) processRspFromPUF(now sim.VTimeInSec) bool {
-
-	msg := p.ToPUF.Peek()
+func (p *CommandProcessor) processRspFromRoT(now sim.VTimeInSec) bool {
+	msg := p.ToRoT.Peek()
 	if msg == nil {
 		return false
 	}
-	fmt.Printf("[*] PUF Response processing in CP port (%s)\n", p.ToPUF.Name())
+
 	switch req := msg.(type) {
 	case *puf.PUFResponse:
+		fmt.Printf("[*] PUF Response received in CP port (%s)\n", p.ToRoT.Name())
 		rsp := &puf.PUFResponse{
 			MsgMeta: sim.MsgMeta{
 				ID:       sim.GetIDGenerator().Generate(),
@@ -267,15 +259,57 @@ func (p *CommandProcessor) processRspFromPUF(now sim.VTimeInSec) bool {
 			},
 			Response: req.Response,
 		}
-
 		p.toDriverSender.Send(rsp)
-		p.ToPUF.Retrieve(now)
+		p.ToRoT.Retrieve(now)
 		fmt.Printf("[*] PUF Response sent to Driver port (%s)\n", p.Driver.Name())
+		return true
+	case *protocol.GPUAttestationRsp:
+		fmt.Printf("[*] Attestation Response received in CP port (%s) from RoT port (%s)\n", p.ToRoT.Name(), p.RoT.Name())
+		rsp := &protocol.GPUAttestationRsp{
+			MsgMeta: sim.MsgMeta{
+				ID:       sim.GetIDGenerator().Generate(),
+				SendTime: now,
+				Src:      p.ToDriver,
+				Dst:      p.Driver,
+			},
+			Report: req.Report,
+		}
+		p.toDriverSender.Send(rsp)
+		p.ToRoT.Retrieve(now)
+		fmt.Printf("[*] Attestation Response sent to Driver port (%s)\n", p.Driver.Name())
 		return true
 	}
 
 	return false
 }
+
+// func (p *CommandProcessor) processRspFromPUF(now sim.VTimeInSec) bool {
+
+// 	msg := p.ToPUF.Peek()
+// 	if msg == nil {
+// 		return false
+// 	}
+// 	fmt.Printf("[*] PUF Response processing in CP port (%s)\n", p.ToPUF.Name())
+// 	switch req := msg.(type) {
+// 	case *puf.PUFResponse:
+// 		rsp := &puf.PUFResponse{
+// 			MsgMeta: sim.MsgMeta{
+// 				ID:       sim.GetIDGenerator().Generate(),
+// 				SendTime: now,
+// 				Src:      p.ToDriver,
+// 				Dst:      p.Driver,
+// 			},
+// 			Response: req.Response,
+// 		}
+
+// 		p.toDriverSender.Send(rsp)
+// 		p.ToPUF.Retrieve(now)
+// 		fmt.Printf("[*] PUF Response sent to Driver port (%s)\n", p.Driver.Name())
+// 		return true
+// 	}
+
+// 	return false
+// }
 
 func (p *CommandProcessor) processRspFromDMAs(now sim.VTimeInSec) bool {
 	msg := p.ToDMA.Peek()

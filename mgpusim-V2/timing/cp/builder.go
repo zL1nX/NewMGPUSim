@@ -141,6 +141,12 @@ func (Builder) createPorts(cp *CommandProcessor, name string) {
 		cp.ToPUF,
 		sim.NewBuffer(cp.Name()+".ToPUFSenderBuffer", unlimited),
 	)
+
+	cp.ToRoT = sim.NewLimitNumMsgPort(cp, 1, name+".ToRoT")
+	cp.toRoTSender = sim.NewBufferedSender(
+		cp.ToRoT,
+		sim.NewBuffer(cp.Name()+".ToRoTSenderBuffer", unlimited),
+	)
 }
 
 func (b *Builder) buildDispatchers(cp *CommandProcessor) {

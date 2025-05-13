@@ -53,9 +53,10 @@ type PUFResponseEvent struct {
 // PUF Component represents a PUF hardware component
 type PUF struct {
 	*sim.TickingComponent
-	challengeWidth uint64 // in bytes
-	responseWidth  uint64 // in bytes
-	ToCP           sim.Port
+	ChallengeWidth uint64   // in bytes
+	ResponseWidth  uint64   // in bytes
+	ToCP           sim.Port // reserved for test usage
+	ToRoT          sim.Port // Only RoT can invoke PUF
 	responseDelay  int
 	randID         []byte // nonce for unique PUF instances
 }
@@ -71,13 +72,16 @@ func NewPUF(
 ) *PUF {
 	newPUF := new(PUF)
 	newPUF.TickingComponent = sim.NewTickingComponent(name, engine, freq, newPUF)
-	newPUF.challengeWidth = challengeWidth
-	newPUF.responseWidth = responseWidth
-	newPUF.responseDelay = 10
+	newPUF.ChallengeWidth = challengeWidth
+	newPUF.ResponseWidth = responseWidth
+	newPUF.responseDelay = 5
 	newPUF.randID = randID
 
 	newPUF.ToCP = sim.NewLimitNumMsgPort(newPUF, 1, name+".ToCP")
 	newPUF.AddPort("ToCP", newPUF.ToCP)
+
+	newPUF.ToRoT = sim.NewLimitNumMsgPort(newPUF, 1, name+".ToRoT")
+	newPUF.AddPort("ToRoT", newPUF.ToRoT)
 
 	fmt.Printf("[*] PUF Instance Created: %s with randID: %x\n",
 		newPUF.Name(), randID)
@@ -85,39 +89,72 @@ func NewPUF(
 }
 
 func (p *PUF) Tick(now sim.VTimeInSec) bool {
-	msg := p.ToCP.Peek()
+	msg := p.ToRoT.Peek()
 	if msg == nil {
 		return false
 	}
 
 	switch req := msg.(type) {
 	case *PUFChallenge:
-		fmt.Printf("[*] PUF Challenge Received in PUF from CP port (%s): %x\n", p.ToCP.Name(), req.Challenge)
+		fmt.Printf("[*] PUF Challenge Received in PUF from RoT port (%s): %x\n", p.ToRoT.Name(), req.Challenge)
 
 		response := p.GenerateResponse(req.Challenge)
 		rspMsg := &PUFResponse{
 			MsgMeta: sim.MsgMeta{
 				ID:       sim.GetIDGenerator().Generate(),
 				SendTime: now + sim.VTimeInSec(float64(p.responseDelay)/float64(p.Freq)),
-				Src:      p.ToCP,
+				Src:      p.ToRoT,
 				Dst:      req.Meta().Src,
 			},
 			Response: response,
 		}
 
-		p.ToCP.Send(rspMsg)
-		p.ToCP.Retrieve(now)
-		fmt.Printf("[*] PUF Response Sent from PUF port (%s) to CP port (%s): %x\n", p.ToCP.Name(), req.Src.Name(), response)
+		p.ToRoT.Send(rspMsg)
+		p.ToRoT.Retrieve(now)
+		fmt.Printf("[*] PUF Response Sent from PUF port (%s) to RoT port (%s): %x\n", p.ToRoT.Name(), req.Src.Name(), response)
 		return true
 	}
 
 	return false
 }
 
+// Use ToCP port for test usage
+// func (p *PUF) Tick(now sim.VTimeInSec) bool {
+// 	msg := p.ToCP.Peek()
+// 	if msg == nil {
+// 		return false
+// 	}
+
+// 	switch req := msg.(type) {
+// 	case *PUFChallenge:
+// 		fmt.Printf("[*] PUF Challenge Received in PUF from CP port (%s): %x\n", p.ToCP.Name(), req.Challenge)
+
+// 		response := p.GenerateResponse(req.Challenge)
+// 		rspMsg := &PUFResponse{
+// 			MsgMeta: sim.MsgMeta{
+// 				ID:       sim.GetIDGenerator().Generate(),
+// 				SendTime: now + sim.VTimeInSec(float64(p.responseDelay)/float64(p.Freq)),
+// 				Src:      p.ToCP,
+// 				Dst:      req.Meta().Src,
+// 			},
+// 			Response: response,
+// 		}
+
+// 		p.ToCP.Send(rspMsg)
+// 		p.ToCP.Retrieve(now)
+// 		fmt.Printf("[*] PUF Response Sent from PUF port (%s) to CP port (%s): %x\n", p.ToCP.Name(), req.Src.Name(), response)
+// 		return true
+// 	}
+
+// 	return false
+// }
+
 // GetPortByName returns the named port
 func (p *PUF) GetPortByName(name string) sim.Port {
 	fmt.Println("In PUF GetPortByName", p.Freq)
 	switch name {
+	case "ToRoT":
+		return p.ToRoT
 	case "ToCP":
 		return p.ToCP
 	default:
@@ -136,7 +173,7 @@ func (p *PUF) GenerateResponse(challenge []byte) []byte {
 
 	// Get hash and truncate to desired response width
 	hash := h.Sum(nil)
-	response := hash[:p.responseWidth]
+	response := hash[:p.ResponseWidth]
 
 	return response
 }
